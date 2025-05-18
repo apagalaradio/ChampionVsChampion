@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ChampionVsChampion</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    table { border-collapse: collapse; margin-top: 20px; width: 100%; max-width: 1000px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; vertical-align: top; }
+    th { background-color: #f0f0f0; user-select: none; cursor: pointer; }
+    #status { margin-top: 10px; font-weight: bold; }
+    #filterContainer { margin-top: 10px; }
+  </style>
+  <script>
+    let allGameData = [];
+    let currentSort = { column: null, asc: true };
+    let searchChampion = "";
+    let filteredByRole = "all";
+    let currentRivalSort = { column: null, asc: true };
+
+    async function fetchAllGames(champion, progressCallback) {
+      const limit = 500;
+      let offset = 0;
+      allGameData = [];
+
+      const encodedChampion = encodeURIComponent(`"${champion}"`);
+      const whereClause = `Team1Picks HOLDS ${encodedChampion} OR Team2Picks HOLDS ${encodedChampion}`;
+
+      while (true) {
+        const url = `https://lol.fandom.com/api.php?action=cargoquery&tables=ScoreboardGames&fields=Tournament,GameId,Team1,Team1Players,Team1Picks,Team2,Team2Players,Team2Picks,DateTime_UTC,WinTeam&where=${whereClause}&limit=${limit}&offset=${offset}&format=json&origin=*`;
+
+        try {
+          const response = await fetch(url);
+          const data = await response.json();
+
+          if (!data.cargoquery || data.cargoquery.length === 0) break;
+
+          const currentBatch = data.cargoquery.map(item => item.title);
+          allGameData = allGameData.concat(currentBatch);
+          progressCallback(allGameData.length);
+
+          if (currentBatch.length < limit) break;
+          offset += limit;
+        } catch (error) {
+          console.error("Error fetching data:", error);
+          break;
+        }
+      }
+    }
+
+    async function handleSearch() {
+      const searchButton = document.getElementById("searchButton");
+      const searchChampionInput = document.getElementById("championInput");
+      searchChampion = searchChampionInput.value.trim().toLowerCase();
+      const status = document.getElementById("status");
+
+      if (!searchChampion) {
+        alert("Please enter a champion name.");
+        return;
+      }
+
+      searchButton.disabled = true;
+      status.textContent = "Loading records...";
+      currentSort = { column: null, asc: true };
+
+      await fetchAllGames(searchChampion, total => {
+        status.textContent = `Records fetched: ${total}`;
+      });
+
+      filteredByRole = "all";
+      document.getElementById("roleFilter").value = "all";
+      displayResults(allGameData);
+      searchButton.disabled = false;
+    }
+
+    function displayResults(games) {
+      const resultDiv = document.getElementById("results");
+      const summaryDiv = document.getElementById("summary");
+      resultDiv.innerHTML = "";
+      summaryDiv.innerHTML = "";
+
+      if (games.length === 0) {
+        resultDiv.textContent = "No matches found with that champion.";
+        return;
+      }
+
+      const table = document.createElement("table");
+      const headerRow = table.insertRow();
+      const headers = [
+        "#", "Tournament", "GameId", "DateTime UTC", "Team1", "Team1Players", "Team1Picks",
+        "Team2", "Team2Players", "Team2Picks", "WinTeam", "Champion Role", "Rival Champion"
+      ];
+
+      headers.forEach(header => {
+        const cell = headerRow.insertCell();
+        if (["GameId", "DateTime UTC", "Team1", "Team2", "Tournament", "WinTeam"].includes(header)) {
+          cell.outerHTML = `<th onclick="sortByColumn('${header}')">${header}</th>`;
+        } else {
+          cell.outerHTML = `<th>${header}</th>`;
+        }
+      });
+
+      const roles = ["TOP", "JG", "MID", "ADC", "SUP"];
+      let count = 0;
+
+      const rivalStats = {};
+
+      games.forEach(game => {
+        const team1List = (game.Team1Picks || "").split(",").map(p => p.trim());
+        const team2List = (game.Team2Picks || "").split(",").map(p => p.trim());
+
+        const team1Lower = team1List.map(p => p.toLowerCase());
+        const team2Lower = team2List.map(p => p.toLowerCase());
+
+        let roleIndex = team1Lower.indexOf(searchChampion);
+        let team = "Team1";
+        if (roleIndex === -1) {
+          roleIndex = team2Lower.indexOf(searchChampion);
+          team = "Team2";
+        }
+
+        let role = roleIndex >= 0 && roleIndex < roles.length ? roles[roleIndex] : "N/A";
+
+        if (filteredByRole !== "all" && role !== filteredByRole) return;
+
+        let rivalChampion = "N/A";
+        if (roleIndex >= 0 && roleIndex < 5) {
+          if (team === "Team1" && team2List.length > roleIndex) {
+            rivalChampion = team2List[roleIndex] || "N/A";
+          } else if (team === "Team2" && team1List.length > roleIndex) {
+            rivalChampion = team1List[roleIndex] || "N/A";
+          }
+        }
+
+        if (rivalChampion !== "N/A") {
+          if (!rivalStats[rivalChampion]) {
+            rivalStats[rivalChampion] = { appearances: 0, wins: 0 };
+          }
+          rivalStats[rivalChampion].appearances++;
+
+          const winner = game.WinTeam || "";
+          const championTeam = team === "Team1" ? game.Team1 : game.Team2;
+          if (winner.toLowerCase() === championTeam.toLowerCase()) {
+            rivalStats[rivalChampion].wins++;
+          }
+        }
+
+        const row = table.insertRow();
+        row.insertCell().textContent = ++count;
+        row.insertCell().textContent = game.Tournament || "N/A";
+        row.insertCell().textContent = game.GameId;
+        row.insertCell().textContent = game["DateTime UTC"];
+        row.insertCell().textContent = game.Team1 || "N/A";
+        row.insertCell().innerHTML = (game.Team1Players || "").split(",").map(p => `• ${p.trim()}`).join("<br>");
+        row.insertCell().innerHTML = (game.Team1Picks || "").split(",").map(p => `• ${p.trim()}`).join("<br>");
+        row.insertCell().textContent = game.Team2 || "N/A";
+        row.insertCell().innerHTML = (game.Team2Players || "").split(",").map(p => `• ${p.trim()}`).join("<br>");
+        row.insertCell().innerHTML = (game.Team2Picks || "").split(",").map(p => `• ${p.trim()}`).join("<br>");
+        row.insertCell().textContent = game.WinTeam || "N/A";
+        row.insertCell().textContent = role;
+        row.insertCell().textContent = rivalChampion;
+      });
+
+      resultDiv.appendChild(table);
+
+      const summaryTitle = document.createElement("h2");
+      const capitalizedChampion = searchChampion.charAt(0).toUpperCase() + searchChampion.slice(1);
+      summaryTitle.textContent = `Summary of ${capitalizedChampion} vs Champions`;
+      summaryDiv.appendChild(summaryTitle);
+
+      const summaryTable = document.createElement("table");
+      summaryTable.id = "rivalSummary";
+      const header = summaryTable.insertRow();
+      const headersSummary = ["Rival Champion", "Appearances", "Wins", "Losses", "Winrate (%)"];
+      headersSummary.forEach(hdr => {
+        const th = document.createElement("th");
+        th.textContent = hdr;
+        th.style.cursor = "pointer";
+        th.onclick = () => sortRivals(hdr);
+        header.appendChild(th);
+      });
+
+      const data = Object.entries(rivalStats).map(([name, stats]) => {
+        const losses = stats.appearances - stats.wins;
+        const winrate = stats.appearances > 0 ? ((stats.wins / stats.appearances) * 100).toFixed(2) : "0.00";
+        return { name, appearances: stats.appearances, wins: stats.wins, losses, winrate: parseFloat(winrate) };
+      });
+
+      summaryTable.dataset.raw = JSON.stringify(data);
+      populateRivalTable(data, summaryTable);
+      summaryDiv.appendChild(summaryTable);
+    }
+
+    function sortRivals(column) {
+      const table = document.getElementById("rivalSummary");
+      const raw = JSON.parse(table.dataset.raw || "[]");
+
+      if (currentRivalSort.column === column) {
+        currentRivalSort.asc = !currentRivalSort.asc;
+      } else {
+        currentRivalSort.column = column;
+        currentRivalSort.asc = true;
+      }
+
+      raw.sort((a, b) => {
+        let valA, valB;
+        if (column === "Rival Champion") {
+          valA = a.name.toLowerCase();
+          valB = b.name.toLowerCase();
+        } else if (column === "Winrate (%)") {
+          valA = a.winrate;
+          valB = b.winrate;
+        } else {
+          const key = column.toLowerCase();
+          valA = a[key];
+          valB = b[key];
+        }
+        return currentRivalSort.asc
+          ? valA > valB ? 1 : valA < valB ? -1 : 0
+          : valA < valB ? 1 : valA > valB ? -1 : 0;
+      });
+
+      populateRivalTable(raw, table);
+    }
+
+    function populateRivalTable(data, table) {
+      while (table.rows.length > 1) table.deleteRow(1);
+      data.forEach(({ name, appearances, wins, losses, winrate }) => {
+        const row = table.insertRow();
+        row.insertCell().textContent = name;
+        row.insertCell().textContent = appearances;
+        row.insertCell().textContent = wins;
+        row.insertCell().textContent = losses;
+        row.insertCell().textContent = winrate.toFixed(2);
+      });
+    }
+
+    function sortByColumn(column) {
+      if (currentSort.column === column) {
+        currentSort.asc = !currentSort.asc;
+      } else {
+        currentSort.column = column;
+        currentSort.asc = true;
+      }
+
+      allGameData.sort((a, b) => {
+        let valA = a[column] || "";
+        let valB = b[column] || "";
+
+        if (column === "DateTime UTC") {
+          valA = new Date(valA);
+          valB = new Date(valB);
+        } else if (column === "GameId") {
+          valA = Number(valA) || valA;
+          valB = Number(valB) || valB;
+        } else {
+          valA = typeof valA === "string" ? valA.toLowerCase() : valA;
+          valB = typeof valB === "string" ? valB.toLowerCase() : valB;
+        }
+
+        return currentSort.asc
+          ? valA > valB ? 1 : valA < valB ? -1 : 0
+          : valA < valB ? 1 : valA > valB ? -1 : 0;
+      });
+
+      displayResults(allGameData);
+    }
+
+    function handleRoleFilterChange() {
+      filteredByRole = document.getElementById("roleFilter").value;
+      displayResults(allGameData);
+    }
+  </script>
+</head>
+<body>
+  <h1>ChampionVsChampion</h1>
+  <div>
+    <label for="championInput">Champion name:</label>
+    <input type="text" id="championInput" placeholder="e.g., Ahri" />
+    <button id="searchButton" onclick="handleSearch()">Search</button>
+  </div>
+
+  <div id="filterContainer">
+    <label for="roleFilter">Filter by role:</label>
+    <select id="roleFilter" onchange="handleRoleFilterChange()">
+      <option value="all">All</option>
+      <option value="TOP">TOP</option>
+      <option value="JG">JG</option>
+      <option value="MID">MID</option>
+      <option value="ADC">ADC</option>
+      <option value="SUP">SUP</option>
+    </select>
+  </div>
+
+  <div id="status"></div>
+  <div id="results"></div>
+  <div id="summary"></div>
+</body>
+</html>
