@@ -17,6 +17,7 @@
     let currentSort = { column: null, asc: true };
     let searchChampion = "";
     let filteredByRole = "all";
+    let filteredByRival = "all";
     let currentRivalSort = { column: null, asc: true };
 
     async function fetchAllGames(champion, progressCallback) {
@@ -33,7 +34,6 @@
         try {
           const response = await fetch(url);
           const data = await response.json();
-
           if (!data.cargoquery || data.cargoquery.length === 0) break;
 
           const currentBatch = data.cargoquery.map(item => item.title);
@@ -70,6 +70,9 @@
 
       filteredByRole = "all";
       document.getElementById("roleFilter").value = "all";
+      filteredByRival = "all";
+      document.getElementById("rivalFilter").innerHTML = '<option value="all">All</option>';
+
       displayResults(allGameData);
       searchButton.disabled = false;
     }
@@ -89,12 +92,12 @@
       const headerRow = table.insertRow();
       const headers = [
         "#", "Tournament", "GameId", "DateTime UTC", "Team1", "Team1Players", "Team1Picks",
-        "Team2", "Team2Players", "Team2Picks", "WinTeam", "Champion Role", "Rival Champion"
+        "Team2", "Team2Players", "Team2Picks", "Champion Win", "WinTeam", "Champion Role", "Rival Champion"
       ];
 
       headers.forEach(header => {
         const cell = headerRow.insertCell();
-        if (["GameId", "DateTime UTC", "Team1", "Team2", "Tournament", "WinTeam"].includes(header)) {
+        if (["GameId", "DateTime UTC", "Team1", "Team2", "Tournament", "WinTeam", "Champion Win"].includes(header)) {
           cell.outerHTML = `<th onclick="sortByColumn('${header}')">${header}</th>`;
         } else {
           cell.outerHTML = `<th>${header}</th>`;
@@ -105,6 +108,7 @@
       let count = 0;
 
       const rivalStats = {};
+      const rivalSet = new Set();
 
       games.forEach(game => {
         const team1List = (game.Team1Picks || "").split(",").map(p => p.trim());
@@ -133,7 +137,10 @@
           }
         }
 
+        if (filteredByRival !== "all" && rivalChampion !== filteredByRival) return;
+
         if (rivalChampion !== "N/A") {
+          rivalSet.add(rivalChampion);
           if (!rivalStats[rivalChampion]) {
             rivalStats[rivalChampion] = { appearances: 0, wins: 0 };
           }
@@ -146,6 +153,10 @@
           }
         }
 
+        const winner = game.WinTeam || "";
+        const championTeam = team === "Team1" ? game.Team1 : game.Team2;
+        const championWin = winner.toLowerCase() === championTeam.toLowerCase() ? "Yes" : "No";
+
         const row = table.insertRow();
         row.insertCell().textContent = ++count;
         row.insertCell().textContent = game.Tournament || "N/A";
@@ -157,12 +168,23 @@
         row.insertCell().textContent = game.Team2 || "N/A";
         row.insertCell().innerHTML = (game.Team2Players || "").split(",").map(p => `• ${p.trim()}`).join("<br>");
         row.insertCell().innerHTML = (game.Team2Picks || "").split(",").map(p => `• ${p.trim()}`).join("<br>");
+        row.insertCell().textContent = championWin;
         row.insertCell().textContent = game.WinTeam || "N/A";
         row.insertCell().textContent = role;
         row.insertCell().textContent = rivalChampion;
       });
 
       resultDiv.appendChild(table);
+
+      // Populate rival filter
+      const rivalFilter = document.getElementById("rivalFilter");
+      const sortedRivals = Array.from(rivalSet).sort();
+      sortedRivals.forEach(rival => {
+        const option = document.createElement("option");
+        option.value = rival;
+        option.textContent = rival;
+        rivalFilter.appendChild(option);
+      });
 
       const summaryTitle = document.createElement("h2");
       const capitalizedChampion = searchChampion.charAt(0).toUpperCase() + searchChampion.slice(1);
@@ -271,6 +293,11 @@
       filteredByRole = document.getElementById("roleFilter").value;
       displayResults(allGameData);
     }
+
+    function handleRivalFilterChange() {
+      filteredByRival = document.getElementById("rivalFilter").value;
+      displayResults(allGameData);
+    }
   </script>
 </head>
 <body>
@@ -290,6 +317,11 @@
       <option value="MID">MID</option>
       <option value="ADC">ADC</option>
       <option value="SUP">SUP</option>
+    </select>
+
+    <label for="rivalFilter" style="margin-left: 20px;">Filter by Rival Champion:</label>
+    <select id="rivalFilter" onchange="handleRivalFilterChange()">
+      <option value="all">All</option>
     </select>
   </div>
 
