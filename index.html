@@ -13,6 +13,55 @@
     #filterContainer { margin-top: 10px; }
     /* Color rows where champion wins */
     .win-row { background-color: #d0f0d0; }
+
+    /* Styles for multiselect dropdown */
+    .multiselect {
+      position: relative;
+      display: inline-block;
+      width: 250px;
+      margin-right: 20px;
+      vertical-align: middle;
+    }
+    .selectBox {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border: 1px solid #ccc;
+      padding: 8px;
+      background-color: white;
+      cursor: pointer;
+      user-select: none;
+    }
+    .selectBox:after {
+      content: '▾';
+      margin-left: 8px;
+    }
+    .checkboxes {
+      display: none;
+      border: 1px solid #ccc;
+      position: absolute;
+      background-color: white;
+      z-index: 1;
+      width: 100%;
+      max-height: 250px;
+      overflow-y: auto;
+      box-sizing: border-box;
+    }
+    .checkboxes label {
+      display: block;
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+    .checkboxes label:hover {
+      background-color: #f0f0f0;
+    }
+    .checkboxes .select-all {
+      font-weight: bold;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 5px;
+      margin-bottom: 5px;
+      cursor: pointer;
+    }
   </style>
   <script>
     let allGameData = [];
@@ -21,7 +70,10 @@
     let filteredByRole = "all";
     let filteredByRival = "all";
     let filteredByGame = "all";
-    let currentRivalSort = { column: null, asc: true };
+    let selectedTournaments = new Set();
+    let tournamentSet = new Set();
+
+    let checkboxVisible = false;
 
     async function fetchAllGames(champion, progressCallback) {
       const limit = 500;
@@ -78,8 +130,81 @@
       document.getElementById("rivalFilter").innerHTML = '<option value="all">All</option>';
       document.getElementById("gameFilter").innerHTML = '<option value="all">All</option>';
 
+      // Inicializamos torneo seleccionado con todos
+      tournamentSet = new Set(allGameData.map(g => g.Tournament || "N/A"));
+      selectedTournaments = new Set(tournamentSet);
+
+      buildTournamentMultiselect();
       displayResults(allGameData);
       searchButton.disabled = false;
+    }
+
+    function buildTournamentMultiselect() {
+      const container = document.getElementById("tournamentFilterContainer");
+      container.innerHTML = "";
+
+      const multiselect = document.createElement("div");
+      multiselect.classList.add("multiselect");
+
+      const selectBox = document.createElement("div");
+      selectBox.classList.add("selectBox");
+      selectBox.textContent = "Select tournaments";
+      selectBox.onclick = () => {
+        const cbx = multiselect.querySelector(".checkboxes");
+        cbx.style.display = cbx.style.display === "block" ? "none" : "block";
+      };
+
+      const checkboxes = document.createElement("div");
+      checkboxes.classList.add("checkboxes");
+
+      // Select/Deselect All
+      const selectAllLabel = document.createElement("label");
+      selectAllLabel.classList.add("select-all");
+      const selectAllCheckbox = document.createElement("input");
+      selectAllCheckbox.type = "checkbox";
+      selectAllCheckbox.checked = selectedTournaments.size === tournamentSet.size;
+
+      selectAllCheckbox.onclick = function () {
+        const allCheckboxes = checkboxes.querySelectorAll("input[type='checkbox']:not(.select-all-checkbox)");
+        if (this.checked) {
+          tournamentSet.forEach(t => selectedTournaments.add(t));
+          allCheckboxes.forEach(cb => cb.checked = true);
+        } else {
+          selectedTournaments.clear();
+          allCheckboxes.forEach(cb => cb.checked = false);
+        }
+        displayResults(allGameData);
+      };
+
+      selectAllLabel.appendChild(selectAllCheckbox);
+      selectAllLabel.appendChild(document.createTextNode(" Select/Deselect All"));
+      checkboxes.appendChild(selectAllLabel);
+
+      // Individual tournament checkboxes
+      Array.from(tournamentSet).sort().forEach(tournament => {
+        const label = document.createElement("label");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = tournament;
+        checkbox.checked = selectedTournaments.has(tournament);
+        checkbox.onclick = () => {
+          if (checkbox.checked) {
+            selectedTournaments.add(tournament);
+          } else {
+            selectedTournaments.delete(tournament);
+          }
+          // Actualizar checkbox de selectAll
+          selectAllCheckbox.checked = selectedTournaments.size === tournamentSet.size;
+          displayResults(allGameData);
+        };
+        label.appendChild(checkbox);
+        label.appendChild(document.createTextNode(" " + tournament));
+        checkboxes.appendChild(label);
+      });
+
+      multiselect.appendChild(selectBox);
+      multiselect.appendChild(checkboxes);
+      container.appendChild(multiselect);
     }
 
     function displayResults(games) {
@@ -117,6 +242,8 @@
       const gameNumberSet = new Set();
 
       games.forEach(game => {
+        if (!selectedTournaments.has(game.Tournament || "N/A")) return;  // FILTRAR por torneo multiselección
+
         const gameNumber = game["N GameInMatch"];
         if (gameNumber !== undefined) gameNumberSet.add(gameNumber);
 
@@ -198,7 +325,7 @@
         option.textContent = rival;
         rivalFilter.appendChild(option);
       });
-      rivalFilter.value = filteredByRival || "all"; // preserve selection & allow clearing
+      rivalFilter.value = filteredByRival || "all";
 
       const gameFilter = document.getElementById("gameFilter");
       gameFilter.innerHTML = '<option value="all">All</option>';
@@ -234,7 +361,6 @@
         return { name, appearances: stats.appearances, wins: stats.wins, losses, winrate: parseFloat(winrate) };
       });
 
-      // Calculate totals
       const totals = data.reduce((acc, item) => {
         acc.appearances += item.appearances;
         acc.wins += item.wins;
@@ -247,7 +373,6 @@
       summaryTable.dataset.raw = JSON.stringify(data);
       populateRivalTable(data, summaryTable);
 
-      // Add totals row
       const totalRow = summaryTable.insertRow();
       totalRow.style.fontWeight = "bold";
       totalRow.insertCell().textContent = "Totals";
@@ -263,11 +388,11 @@
       const table = document.getElementById("rivalSummary");
       const raw = JSON.parse(table.dataset.raw || "[]");
 
-      if (currentRivalSort.column === column) {
-        currentRivalSort.asc = !currentRivalSort.asc;
+      if (currentSort.column === column) {
+        currentSort.asc = !currentSort.asc;
       } else {
-        currentRivalSort.column = column;
-        currentRivalSort.asc = true;
+        currentSort.column = column;
+        currentSort.asc = true;
       }
 
       raw.sort((a, b) => {
@@ -283,7 +408,7 @@
           valA = a[key];
           valB = b[key];
         }
-        return currentRivalSort.asc
+        return currentSort.asc
           ? valA > valB ? 1 : valA < valB ? -1 : 0
           : valA < valB ? 1 : valA > valB ? -1 : 0;
       });
@@ -315,72 +440,88 @@
         let valA = a[column] ?? a[column.replace(/_/g, " ")] ?? "";
         let valB = b[column] ?? b[column.replace(/_/g, " ")] ?? "";
 
-        if (column === "DateTime UTC") {
-          valA = new Date(valA);
-          valB = new Date(valB);
-        } else if (["GameId", "N GameInMatch"].includes(column)) {
-          valA = Number(valA) || valA;
-          valB = Number(valB) || valB;
-        } else {
-          valA = typeof valA === "string" ? valA.toLowerCase() : valA;
-          valB = typeof valB === "string" ? valB.toLowerCase() : valB;
-        }
+        if (typeof valA === "string") valA = valA.toLowerCase();
+        if (typeof valB === "string") valB = valB.toLowerCase();
 
-        return currentSort.asc
-          ? valA > valB ? 1 : valA < valB ? -1 : 0
-          : valA < valB ? 1 : valA > valB ? -1 : 0;
+        if (valA < valB) return currentSort.asc ? -1 : 1;
+        if (valA > valB) return currentSort.asc ? 1 : -1;
+        return 0;
       });
 
       displayResults(allGameData);
     }
 
-    function handleRoleFilterChange() {
+    function toggleCheckboxes() {
+      checkboxVisible = !checkboxVisible;
+      const checkboxes = document.querySelectorAll("#results input[type='checkbox']");
+      checkboxes.forEach(cb => cb.style.display = checkboxVisible ? "inline-block" : "none");
+    }
+
+    // Filtros adicionales
+    function onRoleFilterChange() {
       filteredByRole = document.getElementById("roleFilter").value;
       displayResults(allGameData);
     }
 
-    function handleRivalFilterChange() {
+    function onRivalFilterChange() {
       filteredByRival = document.getElementById("rivalFilter").value;
       displayResults(allGameData);
     }
 
-    function handleGameFilterChange() {
+    function onGameFilterChange() {
       filteredByGame = document.getElementById("gameFilter").value;
       displayResults(allGameData);
     }
+
+    document.addEventListener("click", function(event) {
+      const multiselects = document.querySelectorAll(".multiselect");
+      multiselects.forEach(ms => {
+        if (!ms.contains(event.target)) {
+          ms.querySelector(".checkboxes").style.display = "none";
+        }
+      });
+    });
   </script>
 </head>
 <body>
   <h1>ChampionVsChampion</h1>
-  <div>
-    <label for="championInput">Champion name:</label>
-    <input type="text" id="championInput" placeholder="e.g., Ahri" />
-    <button id="searchButton" onclick="handleSearch()">Search</button>
-  </div>
+  <label>
+    Champion name:
+    <input type="text" id="championInput" placeholder="Ej: Riven, Akali, Teemo" />
+  </label>
+  <button id="searchButton" onclick="handleSearch()">Search</button>
+  <div id="status"></div>
 
   <div id="filterContainer">
-    <label for="roleFilter">Filter by role:</label>
-    <select id="roleFilter" onchange="handleRoleFilterChange()">
-      <option value="all">All</option>
-      <option value="TOP">TOP</option>
-      <option value="JG">JG</option>
-      <option value="MID">MID</option>
-      <option value="ADC">ADC</option>
-      <option value="SUP">SUP</option>
-    </select>
+    <label>
+      Role:
+      <select id="roleFilter" onchange="onRoleFilterChange()">
+        <option value="all">All</option>
+        <option value="TOP">TOP</option>
+        <option value="JG">JG</option>
+        <option value="MID">MID</option>
+        <option value="ADC">ADC</option>
+        <option value="SUP">SUP</option>
+      </select>
+    </label>
 
-    <label for="rivalFilter" style="margin-left: 20px;">Filter by Rival Champion:</label>
-    <select id="rivalFilter" onchange="handleRivalFilterChange()">
-      <option value="all">All</option>
-    </select>
+    <label>
+      Rival Champion:
+      <select id="rivalFilter" onchange="onRivalFilterChange()">
+        <option value="all">All</option>
+      </select>
+    </label>
 
-    <label for="gameFilter" style="margin-left: 20px;">Filter by Game #:</label>
-    <select id="gameFilter" onchange="handleGameFilterChange()">
-      <option value="all">All</option>
-    </select>
+    <label>
+      Game:
+      <select id="gameFilter" onchange="onGameFilterChange()">
+        <option value="all">All</option>
+      </select>
+    </label>
+
+    <div id="tournamentFilterContainer" style="display:inline-block; vertical-align:middle;"></div>
   </div>
 
-  <div id="status"></div>
   <div id="results"></div>
   <div id="summary"></div>
 </body>
